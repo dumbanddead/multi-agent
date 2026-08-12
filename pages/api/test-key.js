@@ -16,10 +16,18 @@ export default async function handler(req, res) {
     let r;
 
     if (provider === 'gemini') {
-      // Gemini native: ?key= param, no Bearer
-      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      // Gemini Interactions API: x-goog-api-key header
+      r = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({ model: 'gemini-3.5-flash-lite', input: 'hi', stream: false }),
+      });
     } else if (provider === 'groq') {
       r = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+    } else if (provider === 'cerebras') {
+      r = await fetch('https://api.cerebras.ai/v1/models', {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
     } else {

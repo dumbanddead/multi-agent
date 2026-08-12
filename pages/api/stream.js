@@ -12,7 +12,7 @@ function sanitizeKey(k) {
 function getSettings() {
   let s = {
     provider: 'gemini',
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     apiKey: '',
     workingDir: '',
@@ -33,6 +33,7 @@ function getSettings() {
 const PROVIDER_BASE = {
   openrouter: 'https://openrouter.ai/api/v1',
   groq:       'https://api.groq.com/openai/v1',
+  cerebras:   'https://api.cerebras.ai/v1',
   gemini:     'https://generativelanguage.googleapis.com/v1beta/openai',
   ollama:     'http://localhost:11434/v1',
 };
@@ -83,10 +84,20 @@ function buildCmd(name, args) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { input, mode } = req.body;
+  const { input, mode, provider: reqProvider } = req.body;
   if (!input?.trim()) return res.status(400).json({ error: 'Input is required' });
 
   const s = getSettings();
+
+  // Per-agent provider override: use that provider's saved key
+  if (reqProvider && reqProvider !== s.provider) {
+    const MODEL_DEFAULTS = { gemini: 'gemini-3.5-flash-lite', cerebras: 'gpt-oss-120b', openrouter: 'openrouter/free', ollama: 'qwen2.5-coder:7b' };
+    s.provider = reqProvider;
+    s.apiKey = sanitizeKey((s.keys || {})[reqProvider] || (reqProvider === 'ollama' ? 'ollama' : ''));
+    s.model = MODEL_DEFAULTS[reqProvider] || s.model;
+    s.baseUrl = PROVIDER_BASE[reqProvider] || '';
+  }
+
   const cwd = s.workingDir || process.cwd();
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -108,19 +119,14 @@ export default async function handler(req, res) {
 
     let llmRes, fullText = '';
 
-    // ── Gemini native API (more reliable for free tier than OpenAI compat) ──
+    // ── Gemini Interactions API (v1beta, GA June 2026) ──────────────────────
     if (s.provider === 'gemini') {
-      const model = s.model || 'gemini-2.0-flash';
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?key=${s.apiKey}&alt=sse`;
+      const model = s.model || 'gemini-3.5-flash-lite';
       try {
-        llmRes = await fetch(url, {
+        llmRes = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: AGENT_SYSTEM }] },
-            contents: [{ role: 'user', parts: [{ text: input.trim() }] }],
-            generationConfig: { temperature: 0.7 },
-          }),
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': s.apiKey, 'Api-Revision': '2026-05-20' },
+          body: JSON.stringify({ model, input: input.trim(), system_instruction: AGENT_SYSTEM, stream: true }),
         });
       } catch (err) {
         send({ type: 'error', text: `Network error: ${err.message}` }); res.end(); return;
@@ -143,7 +149,8 @@ export default async function handler(req, res) {
           if (!line.startsWith('data: ')) continue;
           const raw = line.slice(6).trim();
           try {
-            const token = JSON.parse(raw)?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+            const parsed = JSON.parse(raw);
+            const token = parsed.delta?.text ?? '';
             if (token) { fullText += token; send({ type: 'stdout', text: token }); }
           } catch {}
         }
@@ -223,7 +230,11 @@ export default async function handler(req, res) {
     }
     send({ type: 'stdout', text: `🦾 KiroCrew task started\n📄 Task file: ${taskFile}\n\n` });
     const { exe, args } = buildCmd('kirocrew', ['run', taskFile]);
-    const child = spawn(exe, args, { cwd, shell: false, timeout: 600000 });
+    // On Windows, pip installs to AppData\Roaming\Python\PythonXXX\Scripts which is often not on PATH
+    const spawnEnv = process.platform === 'win32'
+      ? { ...process.env, PATH: `${path.join(process.env.APPDATA || '', 'Python', 'Python311', 'Scripts')}${path.delimiter}${process.env.PATH}` }
+      : process.env;
+    const child = spawn(exe, args, { cwd, shell: false, timeout: 600000, env: spawnEnv });
     child.stdout.on('data', (d) => send({ type: 'stdout', text: d.toString() }));
     child.stderr.on('data', (d) => send({ type: 'stderr', text: d.toString() }));
     child.on('close', (code) => {

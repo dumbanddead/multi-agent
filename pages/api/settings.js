@@ -4,10 +4,10 @@ import path from 'path';
 const SETTINGS_FILE = path.join(process.cwd(), 'cline-settings.json');
 
 const DEFAULTS = {
-  provider: 'groq',
+  provider: 'gemini',
   apiKey: '',
-  model: 'llama-3.3-70b-versatile',
-  baseUrl: 'https://api.groq.com/openai/v1',
+  model: 'gemini-3.5-flash-lite',
+  baseUrl: '',
   workingDir: '',
 };
 
@@ -37,11 +37,15 @@ export default function handler(req, res) {
   }
   if (req.method === 'POST') {
     const body = req.body;
-    // Sanitize key: strip "export VAR=", "Bearer ", quotes
     if (body.apiKey) {
       body.apiKey = body.apiKey.trim().replace(/^export\s+\w+=/, '').replace(/^Bearer\s+/i, '').replace(/^["']|["']$/g, '').trim();
     }
-    const merged = { ...read(), ...body };
+    const prev = read();
+    const merged = { ...prev, ...body };
+    // Store this provider's key in the keys map so per-agent switching works
+    if (body.apiKey !== undefined && body.provider) {
+      merged.keys = { ...(prev.keys || {}), ...(body.keys || {}), [body.provider]: body.apiKey };
+    }
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(merged, null, 2));
     return res.status(200).json({ success: true, settings: merged });
   }

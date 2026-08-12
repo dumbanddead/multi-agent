@@ -27,16 +27,16 @@ function MixoLogo({ size = 28 }) {
 
 // ── Provider config ──────────────────────────────────────────────────────────
 const PROVIDERS = [
-  { id: 'gemini',     name: 'Gemini',     badge: 'FREE',  model: 'gemini-2.0-flash',           baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', keyUrl: 'https://aistudio.google.com/apikey',   hint: 'Free via Google AI Studio — no credit card' },
-  { id: 'groq',       name: 'Groq',       badge: 'FREE',  model: 'llama-3.3-70b-versatile',    baseUrl: 'https://api.groq.com/openai/v1',                          keyUrl: 'https://console.groq.com/keys',         hint: 'Free 14 k req/day — no credit card' },
-  { id: 'openrouter', name: 'OpenRouter', badge: 'FREE✦', model: 'qwen/qwen3-8b:free',         baseUrl: 'https://openrouter.ai/api/v1',                            keyUrl: 'https://openrouter.ai/keys',            hint: 'Free models available — no credit card' },
+  { id: 'gemini',     name: 'Gemini',     badge: 'FREE',  model: 'gemini-3.5-flash-lite',      baseUrl: '', keyUrl: 'https://aistudio.google.com/apikey',   hint: 'Free via Google AI Studio — no credit card' },
+  { id: 'cerebras',   name: 'Cerebras',   badge: 'FREE',  model: 'gpt-oss-120b',               baseUrl: 'https://api.cerebras.ai/v1',                              keyUrl: 'https://cloud.cerebras.ai',             hint: 'Free 1M tokens/day, ultra-fast — no credit card' },
+  { id: 'openrouter', name: 'OpenRouter', badge: 'FREE✦', model: 'openrouter/free',            baseUrl: 'https://openrouter.ai/api/v1',                            keyUrl: 'https://openrouter.ai/keys',            hint: 'Free models available — no credit card' },
   { id: 'ollama',     name: 'Ollama',     badge: 'LOCAL', model: 'qwen2.5-coder:7b',           baseUrl: 'http://localhost:11434/v1',                               keyUrl: 'https://ollama.ai',                     hint: 'Runs locally — no key needed', noKey: true },
 ];
 
 const EXT_LANG = { js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', rs: 'rust', go: 'golang', html: 'html', css: 'css', json: 'json', md: 'markdown', sh: 'sh', yaml: 'yaml', yml: 'yaml', txt: 'text', env: 'text' };
 
 let nextId = 1;
-const makeAgent = () => ({ id: nextId++, name: `Agent ${nextId - 1}`, mode: 'task', input: '', output: '', streaming: false, error: '' });
+const makeAgent = () => ({ id: nextId++, name: `Agent ${nextId - 1}`, mode: 'task', provider: null, input: '', output: '', streaming: false, error: '', runTrigger: 0 });
 
 // ── File tree ────────────────────────────────────────────────────────────────
 function FileNode({ entry, depth, selectedFile, onSelect, onRefresh }) {
@@ -177,6 +177,11 @@ function AgentCard({ agent, onUpdate, onRemove, canRemove, onFileCreated }) {
     if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }, [agent.output]);
 
+  // Run All trigger — fires when parent increments runTrigger
+  useEffect(() => {
+    if (agent.runTrigger > 0 && agent.input.trim() && !agent.streaming) run();
+  }, [agent.runTrigger]);
+
   const set = (patch) => onUpdate(agent.id, patch);
 
   const run = async (inputText, runMode) => {
@@ -186,12 +191,13 @@ function AgentCard({ agent, onUpdate, onRemove, canRemove, onFileCreated }) {
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
     const modeIcon = { task: '🤖', kirocrew: '🦾', command: '⌨️' }[modeToUse] ?? '▶';
-    set({ streaming: true, error: '', output: `${modeIcon} ${inputToUse}\n\n` });
+    const providerLabel = agent.provider ? ` [${agent.provider}]` : '';
+    set({ streaming: true, error: '', output: `${modeIcon}${providerLabel} ${inputToUse}\n\n` });
     try {
       const res = await fetch('/api/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: inputToUse, mode: modeToUse }),
+        body: JSON.stringify({ input: inputToUse, mode: modeToUse, provider: agent.provider }),
         signal: abortRef.current.signal,
       });
       const reader = res.body.getReader();
@@ -248,6 +254,26 @@ function AgentCard({ agent, onUpdate, onRemove, canRemove, onFileCreated }) {
         ))}
       </div>
 
+      {/* Per-agent provider selector (AI Task mode only) */}
+      {agent.mode === 'task' && (
+        <div style={{ display: 'flex', gap: 3 }}>
+          {[{ id: null, label: 'Global' }, ...PROVIDERS].map(p => {
+            const active = agent.provider === p.id;
+            return (
+              <button key={String(p.id)} onClick={() => set({ provider: p.id })} title={p.hint || 'Use global settings'}
+                style={{
+                  flex: 1, padding: '3px 0', borderRadius: 5, cursor: 'pointer', fontSize: 9, fontWeight: 600,
+                  border: `1px solid ${active ? 'oklch(52% 0.24 264)' : 'oklch(26% 0.01 264)'}`,
+                  background: active ? 'oklch(52% 0.24 264 / 0.18)' : 'oklch(13% 0.005 264)',
+                  color: active ? 'oklch(78% 0.18 264)' : 'oklch(48% 0 264)',
+                }}>
+                {p.label || p.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <textarea rows={3} value={agent.input} onChange={e => set({ input: e.target.value })}
         placeholder={agent.mode === 'task' ? 'Describe a coding task…' : 'cline --version'}
         disabled={agent.streaming}
@@ -288,11 +314,13 @@ function SettingsPanel({ settings, setSettings, onClose }) {
 
   const provider = PROVIDERS.find(p => p.id === settings.provider) || PROVIDERS[0];
 
-  const select = (p) => setSettings(s => ({ ...s, provider: p.id, model: p.model, baseUrl: p.baseUrl, apiKey: p.noKey ? 'ollama' : '' }));
+  const select = (p) => setSettings(s => ({ ...s, provider: p.id, model: p.model, baseUrl: p.baseUrl, apiKey: p.noKey ? 'ollama' : (s.keys?.[p.id] || '') }));
 
   const save = async () => {
     setSaving(true);
-    await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
+    const toSave = { ...settings, keys: { ...(settings.keys || {}), [settings.provider]: settings.apiKey } };
+    await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toSave) });
+    setSettings(toSave);
     setSaving(false);
     onClose();
   };
@@ -327,7 +355,7 @@ function SettingsPanel({ settings, setSettings, onClose }) {
               </a>
             ))}
           </div>
-          <p style={{ margin: '6px 0 0', color: 'oklch(60% 0.01 264)' }}>No credit card. Gemini &amp; Groq are fastest to set up.</p>
+          <p style={{ margin: '6px 0 0', color: 'oklch(60% 0.01 264)' }}>No credit card. Gemini &amp; Cerebras are fastest to set up.</p>
         </div>
 
         {/* Provider grid */}
@@ -563,10 +591,17 @@ export default function MixoIDE() {
             <div style={{ width: 340, borderLeft: '1px solid oklch(20% 0.008 264)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid oklch(20% 0.008 264)', flexShrink: 0 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'oklch(55% 0 264)' }}>AI Agents</span>
-                <button onClick={() => setAgents(prev => [...prev, makeAgent()])}
-                  style={{ fontSize: 11, background: 'oklch(52% 0.24 264 / 0.15)', border: '1px solid oklch(52% 0.24 264 / 0.3)', color: 'oklch(65% 0.2 264)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer' }}>
-                  + Add Agent
-                </button>
+                <div style={{ display: 'flex', gap: 5 }}>
+                  <button onClick={() => setAgents(prev => prev.map(a => ({ ...a, runTrigger: (a.runTrigger || 0) + 1 })))}
+                    title="Run all agents in parallel"
+                    style={{ fontSize: 11, background: 'oklch(45% 0.14 138 / 0.2)', border: '1px solid oklch(45% 0.14 138 / 0.4)', color: 'oklch(65% 0.14 138)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', fontWeight: 600 }}>
+                    ▶▶ Run All
+                  </button>
+                  <button onClick={() => setAgents(prev => [...prev, makeAgent()])}
+                    style={{ fontSize: 11, background: 'oklch(52% 0.24 264 / 0.15)', border: '1px solid oklch(52% 0.24 264 / 0.3)', color: 'oklch(65% 0.2 264)', borderRadius: 5, padding: '3px 8px', cursor: 'pointer' }}>
+                    + Add Agent
+                  </button>
+                </div>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {agents.map(a => (
