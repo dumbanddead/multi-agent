@@ -1,0 +1,38 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { max-width: 100vw; overflow-x: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+
+.app-surface {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, oklch(52% 0.24 264 / 0.1), transparent),
+    linear-gradient(180deg, oklch(99.5% 0 107) 0%, oklch(97.5% 0.003 264) 100%);
+  min-height: 100vh;
+}
+
+.brand-gradient-text {
+  background: linear-gradient(135deg, oklch(52% 0.24 264.41) 0%, oklch(45% 0.26 290) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.glow-ring {
+  box-shadow: 0 0 0 1px oklch(85% 0 107 / 0.5), 0 4px 16px oklch(52% 0.24 264 / 0.2), 0 1px 3px oklch(0% 0 0 / 0.06);
+}
+
+.panel {
+  background: white;
+  border: 1px solid oklch(85% 0 107 / 0.4);
+  border-radius: 1rem;
+  box-shadow: 0 1px 3px oklch(0% 0 0 / 0.04), 0 4px 12px oklch(0% 0 0 / 0.04);
+}
+
+.fade-in { animation: fadeIn 0.18s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+.stream-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: oklch(65% 0.2 145); animation: blink 1s infinite; vertical-align: middle; margin-left: 4px;
+}
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.2; } }
+
+.agent-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
