@@ -185,7 +185,8 @@ function AgentCard({ agent, onUpdate, onRemove, canRemove, onFileCreated }) {
     if (!inputToUse?.trim()) return;
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
-    set({ streaming: true, error: '', output: `▶ ${modeToUse === 'task' ? '🤖' : '⌨️'} ${inputToUse}\n\n` });
+    const modeIcon = { task: '🤖', kirocrew: '🦾', command: '⌨️' }[modeToUse] ?? '▶';
+    set({ streaming: true, error: '', output: `${modeIcon} ${inputToUse}\n\n` });
     try {
       const res = await fetch('/api/stream', {
         method: 'POST',
@@ -231,14 +232,18 @@ function AgentCard({ agent, onUpdate, onRemove, canRemove, onFileCreated }) {
 
       {/* Mode toggle */}
       <div style={{ display: 'flex', background: 'oklch(13% 0.005 264)', borderRadius: 8, padding: 3, gap: 3 }}>
-        {['task', 'command'].map(m => (
-          <button key={m} onClick={() => set({ mode: m })}
+        {[
+          { id: 'task',      label: '✨ AI Task' },
+          { id: 'kirocrew',  label: '🦾 KiroCrew' },
+          { id: 'command',   label: '⌨️ CMD' },
+        ].map(m => (
+          <button key={m.id} onClick={() => set({ mode: m.id })}
             style={{
-              flex: 1, padding: '4px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500,
-              background: agent.mode === m ? 'oklch(52% 0.24 264)' : 'transparent',
-              color: agent.mode === m ? 'white' : 'oklch(55% 0 264)',
+              flex: 1, padding: '4px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 10, fontWeight: 500,
+              background: agent.mode === m.id ? (m.id === 'kirocrew' ? 'oklch(45% 0.14 138)' : 'oklch(52% 0.24 264)') : 'transparent',
+              color: agent.mode === m.id ? 'white' : 'oklch(55% 0 264)',
             }}>
-            {m === 'task' ? '✨ AI Task' : '⌨️ Command'}
+            {m.label}
           </button>
         ))}
       </div>
@@ -405,12 +410,37 @@ export default function MixoIDE() {
   const [fileTreeKey, setFileTreeKey] = useState(0);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const [kiroInstalled, setKiroInstalled] = useState(null); // null=unknown, true, false
+  const [kiroPanel, setKiroPanel] = useState(false);
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(s => {
       setSettings(s);
       if (!s.apiKey) setSettingsOpen(true);
     }).catch(() => {});
+  }, []);
+
+  // File watcher — auto-refresh tree when any process writes files
+  useEffect(() => {
+    if (!settings.workingDir) return;
+    let es;
+    try {
+      es = new EventSource(`/api/watch?dir=${encodeURIComponent(settings.workingDir)}`);
+      es.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'change') setFileTreeKey(k => k + 1);
+        } catch {}
+      };
+    } catch {}
+    return () => { try { es?.close(); } catch {} };
+  }, [settings.workingDir]);
+
+  // Check if kirocrew is installed
+  useEffect(() => {
+    fetch('/api/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: 'kirocrew --version', mode: 'command' }) })
+      .then(r => { setKiroInstalled(r.ok); })
+      .catch(() => setKiroInstalled(false));
   }, []);
 
   const openFile = async (entry) => {
@@ -453,6 +483,16 @@ export default function MixoIDE() {
           <MixoLogo size={28} />
           <span style={{ fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em', background: 'linear-gradient(135deg, #c4b5fd 0%, #818cf8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>mixo</span>
           <span style={{ fontSize: 11, color: 'oklch(38% 0 264)', borderLeft: '1px solid oklch(25% 0 264)', paddingLeft: 10 }}>free AI IDE</span>
+
+          {/* KiroCrew status chip */}
+          <button onClick={() => setKiroPanel(o => !o)}
+            title="KiroCrew — persistent agent runtime"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, background: kiroInstalled ? 'oklch(22% 0.06 138 / 0.3)' : 'oklch(18% 0.005 264)', border: `1px solid ${kiroInstalled ? 'oklch(45% 0.12 138 / 0.5)' : 'oklch(28% 0.01 264)'}`, borderRadius: 5, padding: '3px 8px', cursor: 'pointer', fontSize: 11 }}>
+            <span style={{ fontSize: 13 }}>🦾</span>
+            <span style={{ color: kiroInstalled ? 'oklch(70% 0.12 138)' : 'oklch(50% 0 264)' }}>
+              KiroCrew {kiroInstalled ? '● on' : kiroInstalled === false ? '○ off' : '…'}
+            </span>
+          </button>
 
           <div style={{ flex: 1 }} />
 
@@ -553,6 +593,54 @@ export default function MixoIDE() {
       </div>
 
       {settingsOpen && <SettingsPanel settings={settings} setSettings={setSettings} onClose={() => setSettingsOpen(false)} />}
+
+      {kiroPanel && (
+        <div style={{ position: 'fixed', inset: 0, background: 'oklch(0% 0 0 / 0.55)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'oklch(14% 0.007 264)', border: '1px solid oklch(28% 0.01 264)', borderRadius: 14, padding: 24, width: 500, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'oklch(90% 0.01 264)' }}>🦾 KiroCrew — Persistent Agents</h2>
+              <button onClick={() => setKiroPanel(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'oklch(55% 0 264)', fontSize: 18 }}>✕</button>
+            </div>
+
+            <div style={{ fontSize: 12, color: 'oklch(65% 0.01 264)', lineHeight: 1.7, marginBottom: 16 }}>
+              KiroCrew runs your agents as <strong style={{ color: 'oklch(80% 0.01 264)' }}>persistent sessions</strong> with memory, checkpointing, and cron scheduling — agents survive restarts and learn from past tasks.
+            </div>
+
+            {kiroInstalled ? (
+              <div style={{ background: 'oklch(22% 0.06 138 / 0.25)', border: '1px solid oklch(45% 0.12 138 / 0.4)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: 'oklch(70% 0.12 138)', marginBottom: 16 }}>
+                ✓ KiroCrew is installed — use the <strong>🦾 KiroCrew</strong> mode in any agent card to run persistent tasks.
+              </div>
+            ) : (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ background: 'oklch(20% 0.06 40 / 0.25)', border: '1px solid oklch(50% 0.15 40 / 0.4)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: 'oklch(70% 0.1 40)', marginBottom: 12 }}>
+                  ○ KiroCrew not detected. Install it to unlock persistent agents.
+                </div>
+                <p style={{ fontSize: 11, fontWeight: 600, color: 'oklch(55% 0 264)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 8px' }}>Install (macOS / Linux)</p>
+                <pre style={{ background: 'oklch(11% 0.003 264)', border: '1px solid oklch(25% 0.01 264)', borderRadius: 7, padding: '8px 12px', fontSize: 11, color: '#86efac', margin: '0 0 10px', overflowX: 'auto' }}>
+                  {'curl -fsSL https://download.crew.kiro.dev/cli.sh | sh'}
+                </pre>
+                <p style={{ fontSize: 11, fontWeight: 600, color: 'oklch(55% 0 264)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 8px' }}>Install (Windows — Python required)</p>
+                <pre style={{ background: 'oklch(11% 0.003 264)', border: '1px solid oklch(25% 0.01 264)', borderRadius: 7, padding: '8px 12px', fontSize: 11, color: '#86efac', margin: 0, overflowX: 'auto' }}>
+                  {'pip install kirocrew\nkirocrew setup\nkirocrew gateway start'}
+                </pre>
+              </div>
+            )}
+
+            <div style={{ fontSize: 11, color: 'oklch(45% 0 264)', lineHeight: 1.6 }}>
+              <strong style={{ color: 'oklch(60% 0 264)' }}>What you get:</strong><br />
+              • Agents remember past sessions &amp; self-improve<br />
+              • Long tasks survive browser refresh / restarts<br />
+              • Schedule agents with cron<br />
+              • mixo file tree auto-refreshes as KiroCrew writes files
+            </div>
+
+            <a href="https://github.com/kirodotdev/KiroCrew" target="_blank" rel="noreferrer"
+              style={{ display: 'block', marginTop: 14, fontSize: 11, color: 'oklch(62% 0.2 264)', textAlign: 'center' }}>
+              View KiroCrew on GitHub ↗
+            </a>
+          </div>
+        </div>
+      )}
 
       <style>{`
         * { box-sizing: border-box; }

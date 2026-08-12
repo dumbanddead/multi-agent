@@ -72,6 +72,14 @@ function buildClineCmd(clineArgs) {
   return { exe: 'cline', args: clineArgs };
 }
 
+function buildCmd(name, args) {
+  if (process.platform === 'win32') {
+    // Try .cmd wrapper first, fall back to bare name via cmd /c
+    return { exe: 'cmd.exe', args: ['/c', name, ...args] };
+  }
+  return { exe: name, args };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -203,6 +211,32 @@ export default async function handler(req, res) {
 
     send({ type: 'done', code: 0 });
     res.end();
+    return;
+  }
+
+  // ── KiroCrew mode: write task.md and spawn kirocrew run ─────────────────
+  if (mode === 'kirocrew') {
+    const taskFile = path.join(cwd, '.mixo-task.md');
+    const taskContent = `# Agent Task\n\n${input.trim()}\n\n## Context\n- Working directory: ${cwd}\n- Timestamp: ${new Date().toISOString()}\n`;
+    try { fs.writeFileSync(taskFile, taskContent, 'utf8'); } catch (err) {
+      send({ type: 'error', text: `Could not write task file: ${err.message}` }); res.end(); return;
+    }
+    send({ type: 'stdout', text: `🦾 KiroCrew task started\n📄 Task file: ${taskFile}\n\n` });
+    const { exe, args } = buildCmd('kirocrew', ['run', taskFile]);
+    const child = spawn(exe, args, { cwd, shell: false, timeout: 600000 });
+    child.stdout.on('data', (d) => send({ type: 'stdout', text: d.toString() }));
+    child.stderr.on('data', (d) => send({ type: 'stderr', text: d.toString() }));
+    child.on('close', (code) => {
+      try { fs.unlinkSync(taskFile); } catch {}
+      send({ type: 'done', code });
+      res.end();
+    });
+    child.on('error', (err) => {
+      const isNotFound = err.code === 'ENOENT';
+      send({ type: 'error', text: isNotFound ? 'kirocrew not found. Install it first — see the KiroCrew panel in mixo.' : err.message });
+      res.end();
+    });
+    req.on('close', () => child.kill());
     return;
   }
 
